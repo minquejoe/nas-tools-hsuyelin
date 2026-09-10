@@ -7,7 +7,7 @@ from sqlalchemy import cast, func, and_, case
 
 from app.db import MainDb, DbPersist
 from app.db.models import *
-from app.utils import StringUtils
+from app.utils import StringUtils, ExceptionUtils
 from app.utils.types import MediaType, RmtMode
 
 
@@ -676,6 +676,22 @@ class DbHelper:
         else:
             return False
 
+    def is_exists_rss_movie_except_rssid(self, title, year, rssid=None):
+        """
+        判断是否存在同名的其它RSS电影（排除指定订阅），用于编辑订阅前校验，
+        避免删除旧订阅后插入失败导致订阅丢失
+        """
+        if not title:
+            return False
+        query = self._db.query(RSSMOVIES).filter(RSSMOVIES.NAME == title,
+                                                 RSSMOVIES.YEAR == str(year))
+        if rssid:
+            try:
+                query = query.filter(RSSMOVIES.ID != int(rssid))
+            except (TypeError, ValueError):
+                pass
+        return query.count() > 0
+
     @DbPersist(_db)
     def insert_rss_movie(self, media_info,
                          state='D',
@@ -831,6 +847,9 @@ class DbHelper:
         """
         if not tmdbid:
             return
+        # 缺失集数不允许为负数
+        if lack is not None:
+            lack = max(int(lack), 0)
         self._db.query(RSSTVS).filter(RSSTVS.ID == int(rid)).update(
             {
                 "TMDBID": tmdbid,
@@ -841,6 +860,96 @@ class DbHelper:
                 "IMAGE": image,
                 "DESC": desc,
                 "NOTE": note
+            }
+        )
+
+    @DbPersist(_db)
+    def update_rss_tv_tmdb_v2(self, rid, title=None, year=None, total=None, lack=None, episodes=None,
+                              image=None, desc=None, note=None, tmdbid=None):
+        """
+        更新订阅电视剧的信息，None的字段不更新（另含缺失明细的原子更新）
+        :param rid: 订阅ID
+        :param title: 名称，None不更新
+        :param year: 年份，None不更新
+        :param total: 总集数
+        :param lack: 缺失集数
+        :param episodes: 缺失明细列表
+        :param image: 图片，None不更新
+        :param desc: 简介，None不更新
+        :param note: 备注，None不更新
+        :param tmdbid: TMDBID，None不更新
+        """
+        if not rid:
+            return
+        update_fields = {}
+        if title is not None:
+            update_fields["NAME"] = title
+        if year is not None:
+            update_fields["YEAR"] = str(year)
+        if tmdbid is not None:
+            update_fields["TMDBID"] = tmdbid
+        if image is not None:
+            update_fields["IMAGE"] = image
+        if desc is not None:
+            update_fields["DESC"] = desc
+        if note is not None:
+            update_fields["NOTE"] = note
+        if total is not None:
+            update_fields["TOTAL"] = total
+        if lack is not None:
+            update_fields["LACK"] = max(int(lack), 0)
+        if update_fields:
+            self._db.query(RSSTVS).filter(RSSTVS.ID == int(rid)).update(update_fields)
+        if episodes is not None:
+            if not episodes:
+                episodes = []
+            else:
+                episodes = [str(epi) for epi in episodes]
+            episodes_str = ",".join(episodes)
+            if self.is_exists_rss_tv_episodes(rid):
+                self._db.query(RSSTVEPISODES).filter(RSSTVEPISODES.RSSID == int(rid)).update(
+                    {
+                        "EPISODES": episodes_str
+                    }
+                )
+            else:
+                self._db.insert(RSSTVEPISODES(
+                    RSSID=rid,
+                    EPISODES=episodes_str
+                ))
+
+    @DbPersist(_db)
+    def update_rss_tv_total_episodes(self, rid, total, lack, episodes):
+        """
+        原子更新电视剧订阅的总集数、缺失集数及缺失明细，避免多线程写交叉产生不一致数据
+        :param rid: 订阅ID
+        :param total: 总集数
+        :param lack: 缺失集数
+        :param episodes: 缺失的集的列表
+        """
+        if not rid:
+            return
+        lack = max(int(lack or 0), 0)
+        if not episodes:
+            episodes = []
+        else:
+            episodes = [str(epi) for epi in episodes]
+        episodes_str = ",".join(episodes)
+        if self.is_exists_rss_tv_episodes(rid):
+            self._db.query(RSSTVEPISODES).filter(RSSTVEPISODES.RSSID == int(rid)).update(
+                {
+                    "EPISODES": episodes_str
+                }
+            )
+        else:
+            self._db.insert(RSSTVEPISODES(
+                RSSID=rid,
+                EPISODES=episodes_str
+            ))
+        self._db.query(RSSTVS).filter(RSSTVS.ID == int(rid)).update(
+            {
+                "TOTAL": total,
+                "LACK": lack
             }
         )
 
@@ -872,6 +981,24 @@ class DbHelper:
             return True
         else:
             return False
+
+    def is_exists_rss_tv_except_rssid(self, title, year, season=None, rssid=None):
+        """
+        判断是否存在同名的其它RSS电视剧（排除指定订阅），用于编辑订阅前校验，
+        避免删除旧订阅后插入失败导致订阅丢失
+        """
+        if not title:
+            return False
+        query = self._db.query(RSSTVS).filter(RSSTVS.NAME == title,
+                                              RSSTVS.YEAR == str(year))
+        if season:
+            query = query.filter(RSSTVS.SEASON == season)
+        if rssid:
+            try:
+                query = query.filter(RSSTVS.ID != int(rssid))
+            except (TypeError, ValueError):
+                pass
+        return query.count() > 0
 
     @DbPersist(_db)
     def insert_rss_tv(self,
@@ -1025,7 +1152,11 @@ class DbHelper:
             return []
         ret = self._db.query(RSSTVEPISODES.EPISODES).filter(RSSTVEPISODES.RSSID == rid).first()
         if ret:
-            return [int(epi) for epi in str(ret[0]).split(',')]
+            try:
+                return [int(epi) for epi in str(ret[0]).split(',') if epi != '']
+            except Exception as err:
+                ExceptionUtils.exception_traceback(err)
+                return None
         else:
             return None
 
@@ -2125,15 +2256,27 @@ class DbHelper:
 
     def is_exists_rss_history(self, rssid):
         """
-        判断RSS历史是否存在
+        判断RSS历史是否存在（同一订阅ID且同一媒体名称，防止订阅ID复用导致误判）
         """
         if not rssid:
             return False
-        count = self._db.query(RSSHISTORY).filter(RSSHISTORY.RSSID == rssid).count()
-        if count > 0:
-            return True
-        else:
+        return self.is_exists_rss_history_by_name(rssid=rssid)
+
+    def is_exists_rss_history_by_name(self, rssid, name=None, season=None):
+        """
+        判断RSS历史是否已存在同媒体记录
+        :param rssid: 订阅ID，ID可能被复用，因此需结合名称判断
+        :param name: 媒体名称
+        :param season: 季
+        """
+        if not rssid:
             return False
+        query = self._db.query(RSSHISTORY).filter(RSSHISTORY.RSSID == str(rssid))
+        if name:
+            query = query.filter(RSSHISTORY.NAME == name)
+        if season:
+            query = query.filter(RSSHISTORY.SEASON == str(season))
+        return query.count() > 0
 
     def check_rss_history(self, type_str, name, year, season):
         """
@@ -2154,8 +2297,13 @@ class DbHelper:
     def insert_rss_history(self, rssid, rtype, name, year, tmdbid, image, desc, season=None, total=None, start=None):
         """
         登记RSS历史
+        :return: True登记成功或已存在，False登记失败
         """
-        if not self.is_exists_rss_history(rssid):
+        # 仅当同订阅ID且同媒体名称的历史存在时才去重，
+        # 防止订阅删除后新订阅复用ID导致历史登记被跳过（订阅完成后无历史记录）
+        if self.is_exists_rss_history_by_name(rssid=rssid, name=name, season=season):
+            return True
+        try:
             self._db.insert(RSSHISTORY(
                 TYPE=rtype,
                 RSSID=rssid,
@@ -2170,6 +2318,10 @@ class DbHelper:
                 FINISH_TIME=time.strftime('%Y-%m-%d %H:%M:%S',
                                           time.localtime(time.time()))
             ))
+            return True
+        except Exception as err:
+            ExceptionUtils.exception_traceback(err)
+            return False
 
     @DbPersist(_db)
     def delete_rss_history(self, rssid):

@@ -376,14 +376,22 @@ class Rss:
                     # 有tmdbid时使用tmdbid匹配
                     if tmdbid and not tmdbid.startswith("DB:"):
                         if str(media_info.tmdb_id) != str(tmdbid):
-                            continue
+                            # 种子未识别出TMDB信息时，尝试通过别名匹配订阅
+                            if not media_info.tmdb_id \
+                                    and self.__match_rss_by_alias(media_info=media_info,
+                                                                  name=name,
+                                                                  year=year,
+                                                                  tmdbid=tmdbid):
+                                pass
+                            else:
+                                continue
                     else:
                         # 豆瓣年份与tmdb取向不同
                         if year and str(media_info.year) not in [str(year),
                                                                  str(int(year) + 1),
                                                                  str(int(year) - 1)]:
                             continue
-                        if name != media_info.title:
+                        if not Media.compare_names(name, media_info.title or media_info.get_name()):
                             continue
                 # 模糊匹配
                 else:
@@ -417,13 +425,21 @@ class Rss:
                 if not fuzzy_match:
                     if tmdbid and not tmdbid.startswith("DB:"):
                         if str(media_info.tmdb_id) != str(tmdbid):
-                            continue
+                            # 种子未识别出TMDB信息时，尝试通过别名匹配订阅
+                            if not media_info.tmdb_id \
+                                    and self.__match_rss_by_alias(media_info=media_info,
+                                                                  name=name,
+                                                                  year=year,
+                                                                  tmdbid=tmdbid):
+                                pass
+                            else:
+                                continue
                     else:
                         # 匹配年份，年份可以为空
                         if year and str(year) != str(media_info.year):
                             continue
-                        # 匹配名称
-                        if name != media_info.title:
+                        # 匹配名称（忽略大小写、特殊字符、空白及繁简差异）
+                        if not Media.compare_names(name, media_info.title or media_info.get_name()):
                             continue
                     # 匹配季，季可以为空
                     if season and season != media_info.get_season_string():
@@ -500,6 +516,47 @@ class Rss:
                 media_info.get_title_string(),
                 media_info.get_season_episode_string()))
             return False, match_msg, match_rss_info
+
+    def __match_rss_by_alias(self, media_info, name, year, tmdbid):
+        """
+        种子未识别出TMDB信息时，通过订阅媒体的别名（TMDB译名/别名/Bangumi别名）辅助匹配
+        :param media_info: 已识别的种子媒体信息
+        :param name: 订阅名称
+        :param year: 订阅年份
+        :param tmdbid: 订阅的TMDBID
+        :return: 匹配成功返回True并回填媒体信息，否则返回False
+        """
+        if not media_info or not str(tmdbid or "").isdigit():
+            return False
+        torrent_name = media_info.get_name()
+        if not torrent_name:
+            return False
+        try:
+            alias_names = self.media.get_media_alias_names(mtype=MediaType.TV, tmdbid=int(tmdbid))
+        except Exception as err:
+            ExceptionUtils.exception_traceback(err)
+            return False
+        if not alias_names:
+            return False
+        # 年份校验，相差1年以内视为匹配（部分站点上传时季集年份与首播年份不一致）
+        if year and media_info.year \
+                and str(year).isdigit() and str(media_info.year).isdigit() \
+                and abs(int(media_info.year) - int(year)) > 1:
+            return False
+        match_flag = False
+        for alias in alias_names:
+            if Media.compare_names(alias, torrent_name):
+                match_flag = True
+                break
+        if not match_flag:
+            return False
+        # 匹配成功，回填TMDB信息
+        tmdb_info = self.media.get_tmdb_info(mtype=MediaType.TV, tmdbid=int(tmdbid))
+        if not tmdb_info:
+            return False
+        media_info.set_tmdb_info(tmdb_info)
+        log.info("【Rss】%s 通过别名匹配订阅：%s" % (media_info.org_string, name))
+        return True
 
     def download_rss_torrent(self, rss_download_torrents, rss_no_exists):
         """

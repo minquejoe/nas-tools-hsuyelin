@@ -11,9 +11,10 @@ from lxml import etree
 import log
 from app.helper import MetaHelper
 from app.helper.openai_helper import OpenAiHelper
+from app.media.bangumi import Bangumi
 from app.media.meta.metainfo import MetaInfo
 from app.media.tmdbv3api import TMDb, Search, Movie, TV, Person, Find, TMDbException, Discover, Trending, Episode, Genre
-from app.utils import PathUtils, EpisodeFormat, RequestUtils, NumberUtils, StringUtils, cacheman
+from app.utils import PathUtils, EpisodeFormat, RequestUtils, NumberUtils, StringUtils, cacheman, ExceptionUtils
 from app.utils.types import MediaType, MatchMode
 from config import Config, KEYWORD_BLACKLIST, KEYWORD_SEARCH_WEIGHT_3, KEYWORD_SEARCH_WEIGHT_2, KEYWORD_SEARCH_WEIGHT_1, \
     KEYWORD_STR_SIMILARITY_THRESHOLD, KEYWORD_DIFF_SCORE_THRESHOLD
@@ -124,10 +125,26 @@ class Media:
             return False
         if not isinstance(tmdb_names, list):
             tmdb_names = [tmdb_names]
-        file_name = StringUtils.handler_special_chars(file_name).upper()
+        # 繁简转换后比较，解决 "小書痴" 与 "小书痴" 这类繁简差异
+        try:
+            import zhconv
+            file_name_cmp = zhconv.convert(file_name, "zh-cn")
+        except Exception:
+            file_name_cmp = file_name
+        file_name_norm = StringUtils.handler_special_chars(file_name_cmp).upper()
+        file_name_nospace = Media.__norm_cmp_name(file_name_cmp)
         for tmdb_name in tmdb_names:
-            tmdb_name = StringUtils.handler_special_chars(tmdb_name).strip().upper()
-            if file_name == tmdb_name or (StringUtils.is_eng_media_name_format(file_name) and file_name in tmdb_name):
+            try:
+                tmdb_name_cmp = zhconv.convert(tmdb_name, "zh-cn")
+            except Exception:
+                tmdb_name_cmp = tmdb_name
+            tmdb_name_norm = StringUtils.handler_special_chars(tmdb_name_cmp).strip().upper()
+            if file_name_norm == tmdb_name_norm \
+                    or (StringUtils.is_eng_media_name_format(file_name_norm)
+                        and file_name_norm in tmdb_name_norm):
+                return True
+            # 忽略空格差异比较，如 "Kuro Neko" 与 "Kuroneko"
+            if file_name_nospace and file_name_nospace == Media.__norm_cmp_name(tmdb_name_cmp):
                 return True
         return False
 
@@ -447,6 +464,152 @@ class Media:
             log.info("【Meta】%s 在TMDB中未找到媒体信息!" % file_media_name)
         return info
 
+    @staticmethod
+    def __norm_cmp_name(name):
+        """
+        生成用于名称比较的规范化字符串：繁简统一、去特殊字符、去空白、转大写
+        可解决 "Kuro Neko" 与 "Kuroneko"、"小書痴" 与 "小书痴" 这类差异导致的匹配失败
+        """
+        if not name:
+            return ""
+        try:
+            import zhconv
+            name = zhconv.convert(str(name), "zh-cn")
+        except Exception:
+            pass
+        return re.sub(r"\s+", "", StringUtils.handler_special_chars(name).upper())
+
+    @lru_cache(maxsize=256)
+    def get_bangumi_subject_names(self, name, year=None):
+        """
+        通过Bangumi查询名称的所有别名（日文名/中文名/罗马音/英文名等）
+        用于识别失败时的回退匹配及搜索词扩展
+        :param name: 名称（中文名、日文名或罗马音）
+        :param year: 年份，辅助匹配
+        :return: 别名列表，查询失败返回[]
+        """
+        if not name:
+            return []
+        bangumi = Bangumi()
+        detail = None
+        try:
+            # 优先严格匹配
+            detail = bangumi.search_and_match(name=name, year=year)
+            if not detail:
+                # 宽松匹配：低于命名门槛时取Bangumi搜索排序第一的条目
+                detail = bangumi.search_and_match(name=name, year=year, min_score=0, loose=True)
+        except Exception as err:
+            ExceptionUtils.exception_traceback(err)
+            return []
+        if not detail:
+            return []
+        names = Bangumi.get_subject_names(detail)
+        log.info("【Meta】通过Bangumi查询到 %s 的别名：%s" % (name, names))
+        return names
+
+    def get_bangumi_total_episodes(self, name, year=None):
+        """
+        通过Bangumi查询番剧总集数，用于与TMDB交叉验证
+        :return: (总集数, 匹配得分)，查询不到返回(0, 0)
+        """
+        if not name:
+            return 0, 0
+        try:
+            return Bangumi().get_total_episodes(name=name, year=year)
+        except Exception as err:
+            ExceptionUtils.exception_traceback(err)
+            return 0, 0
+
+    @lru_cache(maxsize=256)
+    def get_media_alias_names(self, mtype: MediaType, tmdbid):
+        """
+        获取媒体的所有别名（TMDB名称/别名/译名 + Bangumi别名），用于订阅匹配及识别辅助
+        :param mtype: 类型
+        :param tmdbid: TMDB编号
+        :return: 别名列表
+        """
+        if not tmdbid:
+            return []
+        tmdb_info, names = self.__search_tmdb_allnames(mtype=mtype, tmdb_id=tmdbid)
+        if not tmdb_info:
+            return names
+        main_title = tmdb_info.get('name') if mtype != MediaType.MOVIE else tmdb_info.get('title')
+        org_title = tmdb_info.get('original_name') if mtype != MediaType.MOVIE else tmdb_info.get('original_title')
+        for title in (main_title, org_title):
+            if title and title not in names:
+                names.append(title)
+        # 补充Bangumi别名（罗马音等）
+        if mtype != MediaType.MOVIE and main_title:
+            try:
+                for alias in self.get_bangumi_subject_names(name=main_title):
+                    if alias and alias not in names:
+                        names.append(alias)
+            except Exception as err:
+                ExceptionUtils.exception_traceback(err)
+        return names
+
+    @staticmethod
+    def compare_names(name1, name2):
+        """
+        比较两个媒体名称是否匹配（忽略大小写、特殊字符、空白及繁简差异）
+        """
+        if not name1 or not name2:
+            return False
+        norm1 = Media.__norm_cmp_name(name1)
+        norm2 = Media.__norm_cmp_name(name2)
+        if not norm1 or not norm2:
+            return False
+        if norm1 == norm2:
+            return True
+        # 一方为另一方的前缀或包含关系（长度足够时），用于罗马音简繁差异等场景
+        if len(norm1) >= 8 and norm1.startswith(norm2):
+            return True
+        if len(norm2) >= 8 and norm2.startswith(norm1):
+            return True
+        return False
+
+    def __search_tmdb_by_bangumi(self, file_media_name, first_media_year=None):
+        """
+        识别回退：TMDB按名称搜索失败时，借助Bangumi的别名（中文名/日文名/罗马音/英文名）再查TMDB
+        :param file_media_name: 识别的名称
+        :param first_media_year: 首播年份
+        :return: TMDB的INFO，未匹配返回None
+        """
+        if not file_media_name:
+            return None
+        alias_names = self.get_bangumi_subject_names(name=file_media_name, year=first_media_year)
+        if not alias_names:
+            return None
+        norm_input = self.__norm_cmp_name(file_media_name)
+        for alias in alias_names:
+            # 与输入相同的别名跳过
+            if self.__norm_cmp_name(alias) == norm_input:
+                continue
+            # 去掉别名中的季数后缀（如 "第三部"、"Season 2"），季数由识别流程单独处理
+            alias_clean = self.__strip_season_suffix(alias)
+            if not alias_clean or self.__norm_cmp_name(alias_clean) == norm_input:
+                continue
+            info = self.__search_tmdb(file_media_name=alias_clean,
+                                      search_type=MediaType.TV,
+                                      first_media_year=first_media_year)
+            if info:
+                log.info("【Meta】%s 通过Bangumi别名 %s 成功识别TMDB信息" % (file_media_name, alias_clean))
+                return info
+        return None
+
+    @staticmethod
+    def __strip_season_suffix(name):
+        """
+        去除名称尾部的季数描述，如 "xxx 第三季"、"xxx 第2期"、"xxx Season 3"、"xxx S2"
+        """
+        if not name:
+            return name
+        for _ in range(2):
+            name = re.sub(
+                r"[\s:：·～〜~\-—]*(第\s*[0-9一二三四五六七八九十]+\s*[季部期话話]|Season\s*[0-9]+|S[0-9]{1,2})\s*$",
+                "", name, flags=re.IGNORECASE).strip()
+        return name
+
     @lru_cache(maxsize=512)
     def __search_chatgpt(self, file_name, mtype: MediaType):
         """
@@ -744,7 +907,14 @@ class Media:
         if mtype:
             meta_info.type = mtype
         media_key = self.__make_cache_key(meta_info)
-        if not cache or not self.meta.get_meta_data_by_key(media_key):
+        cache_info = self.meta.get_meta_data_by_key(media_key) if cache else None
+        # 识别失败的缓存（id=0）不能永久生效，否则识别能力提升（如新增别名识别）后无法自动修正；
+        # 超过重试间隔后视为无缓存，重新识别
+        if cache_info and not cache_info.get("id") \
+                and not cacheman["tmdb_fail_retry"].get(media_key):
+            cacheman["tmdb_fail_retry"].set(media_key, True)
+            cache_info = None
+        if not cache or not cache_info:
             # 缓存没有或者强制不使用缓存
             if meta_info.type != MediaType.TV and not meta_info.year:
                 file_media_info = self.__search_multi_tmdb(file_media_name=meta_info.get_name())
@@ -781,6 +951,10 @@ class Media:
                 # 从网站查询
                 file_media_info = self.__search_tmdb_web(file_media_name=meta_info.get_name(),
                                                          mtype=meta_info.type)
+            if not file_media_info and meta_info.type != MediaType.MOVIE:
+                # 通过Bangumi别名辅助识别（中文名/日文名/罗马音/英文名）
+                file_media_info = self.__search_tmdb_by_bangumi(file_media_name=meta_info.get_name(),
+                                                                first_media_year=meta_info.year)
             if not file_media_info and self._chatgpt_enable:
                 # 通过ChatGPT查询
                 mtype, seaons, episodes, file_media_info = self.__search_chatgpt(file_name=title,
@@ -816,7 +990,6 @@ class Media:
                                           file_media_info=file_media_info)
         else:
             # 使用缓存信息
-            cache_info = self.meta.get_meta_data_by_key(media_key)
             if cache_info.get("id"):
                 file_media_info = self.get_tmdb_info(mtype=cache_info.get("type"),
                                                      tmdbid=cache_info.get("id"),

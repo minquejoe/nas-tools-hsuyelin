@@ -51,12 +51,22 @@ class MetaAnime(MetaBase):
                 if name and name.find("/") != -1:
                     name = name.split("/")[-1].strip()
                 if not name or name in self._anime_no_words or (len(name) < 5 and not StringUtils.is_chinese(name)):
-                    # 普遍上第一个非字幕组的 `[]` 中内容为标题
+                    # 普遍上第一个非字幕组的 `[]` 中内容为标题，
+                    # 优先取包含中文（或日文假名）的括号内容，防止字幕组名被误认为标题
                     name_match = re.findall(r'\[(.+?)]', title)
+                    fallback_name = ""
                     for item in name_match:
-                        if not ReleaseGroupsMatcher().match(title=f'[{item}]'):
+                        if ReleaseGroupsMatcher().match(title=f'[{item}]'):
+                            continue
+                        if re.search(r"字幕组|字幕組|汉化组|漢化組|fansub", item, re.IGNORECASE):
+                            continue
+                        if StringUtils.is_chinese(item) or StringUtils.is_japanese(item):
                             name = item
                             break
+                        elif not fallback_name:
+                            fallback_name = item
+                    if (not name or name in self._anime_no_words) and fallback_name:
+                        name = fallback_name
                 # 拆份中英文名称
                 if name:
                     lastword_type = ""

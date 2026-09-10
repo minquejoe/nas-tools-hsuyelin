@@ -4,7 +4,9 @@ import time
 from cacheout import CacheManager, LRUCache, Cache
 
 CACHES = {
-    "tmdb_supply": {'maxsize': 200}
+    "tmdb_supply": {'maxsize': 200},
+    # TMDB识别失败的重试标记缓存，1天后过期允许重新识别
+    "tmdb_fail_retry": {'maxsize': 1000, 'ttl': 24 * 3600, 'timer': time.time}
 }
 
 cacheman = CacheManager(CACHES, cache_class=LRUCache)
