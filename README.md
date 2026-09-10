@@ -43,7 +43,48 @@ docker pull hsuyelin/nas-tools:latest
 
 如无法连接Github，注意不要开启自动更新开关(NASTOOL_AUTO_UPDATE=false)，将NASTOOL_CN_UPDATE设置为true可使用国内源加速安装依赖。
 
-### 2、本地运行
+### 2、从源码构建 Docker 镜像运行
+适用于修改过源码（或无法直接使用官方镜像）的场景，直接使用本地源码构建镜像，无需从GitHub拉取代码。
+
+**docker cli**
+
+```
+# 克隆源码（含子模块）
+git clone -b master https://github.com/hsuyelin/nas-tools --recurse-submodule
+cd nas-tools
+
+# 构建镜像（国内网络可追加：--build-arg PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple --build-arg ALPINE_MIRROR=mirrors.ustc.edu.cn）
+docker build -f docker/Dockerfile.source -t nas-tools:source .
+
+# 运行容器
+docker run -d \
+    --name nas-tools \
+    --hostname nas-tools \
+    -p 3000:3000   `# 默认的webui控制端口` \
+    -v $(pwd)/config:/config  `# 冒号左边请修改为你想在主机上保存配置文件的路径` \
+    -v /你的媒体目录:/你想设置的容器内能见到的目录    `# 媒体目录，多个目录需要分别映射进来` \
+    -e PUID=0     `# 运行程序的用户uid` \
+    -e PGID=0     `# 运行程序的用户gid` \
+    -e UMASK=000  `# 掩码权限，默认000，可以考虑设置为022` \
+    -e NASTOOL_AUTO_UPDATE=false `# 源码构建的镜像不含.git，自动更新不可用，请保持false` \
+    nas-tools:source
+```
+
+**docker-compose**
+
+在仓库根目录执行：
+
+```
+docker compose -f docker/compose.source.yml up -d --build
+```
+
+注意事项：
+
+* 构建时请确保 `third_party/feapder` 子模块内容已拉取（克隆时使用 `--recurse-submodule`，已克隆的可执行 `git submodule update --init --recursive` 补齐）；
+* 源码构建的镜像内不含 `.git`，容器内"在线更新/自动更新"功能不可用，程序更新请重新执行 `docker build` 并重建容器；
+* 其余目录映射、环境变量说明与 [官方镜像](https://raw.githubusercontent.com/hsuyelin/nas-tools/master/docker/readme.md) 一致。
+
+### 3、本地运行
 仅支持python3.10版本，需要预安装cython（python3 -m pip install Cython），如发现缺少依赖包需额外安装：
 ```
 git clone -b master https://github.com/hsuyelin/nas-tools --recurse-submodule 
@@ -52,7 +93,7 @@ export NASTOOL_CONFIG="/xxx/config/config.yaml"
 nohup python3 run.py & 
 ```
 
-### 3、可执行文件运行
+### 4、可执行文件运行
 仅支持python3.10版本，先从tag下载对应的可执行文件，打开终端，例如下载的是macos版本，文件名为：nastool_macos_v3.2.2：
 ```bash
 mv nastool_macos_v3.2.2 nastools
@@ -154,5 +195,6 @@ pip install xxx --proxy=http://ip:port
 解决办法：
 *  TMDB词条未更新集数/下载资源无法识别集数
 *  订阅中设置总集数
+*  最新代码已增强：订阅完成前会校验集数是否真实下载齐全，动漫订阅会结合Bangumi交叉验证总集数并定期修正，未搜索到资源时保持订阅不再误删；历史异常数据（缺失集数超出总集数等）会自动修复
 
 更多功能使用请查看 [nas-tools wiki](https://t.me/NAStool_wiki)

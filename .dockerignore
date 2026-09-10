@@ -1,0 +1,33 @@
+# 版本控制与文档
+.git
+.github
+.gitignore
+*.md
+!README.md
+
+# 备份与临时文件
+*.zip
+*.tar.gz
+/test.py
+/setup.py
+/build_sites.py
+/build/
+/cloudflarespeedtest/
+nastools_test.py
+
+# Python
+__pycache__/
+*.pyc
+*.c
+/venv/
+/.venv/
+
+# IDE与本地环境
+/.idea/
+/.vscode/
+config/sites.json
+
+# 前端构建产物
+/node_modules/
+package-lock.json
+package.json

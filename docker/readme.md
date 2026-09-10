@@ -70,6 +70,45 @@ services:
     container_name: nas-tools
 ```
 
+## 从源码构建镜像运行
+
+适用于修改过源码（或无法直接使用官方镜像）的场景，直接使用本地源码构建镜像，无需在构建时从GitHub拉取代码。
+
+```
+# 克隆源码（含子模块）
+git clone -b master https://github.com/hsuyelin/nas-tools --recurse-submodule
+cd nas-tools
+
+# 构建镜像
+docker build -f docker/Dockerfile.source -t nas-tools:source .
+
+# 运行容器（参数与上方"创建"一致，镜像名改为 nas-tools:source）
+docker run -d \
+    --name nas-tools \
+    --hostname nas-tools \
+    -p 3000:3000 \
+    -v $(pwd)/config:/config \
+    -v /你的媒体目录:/你想设置的容器内能见到的目录 \
+    -e PUID=0 \
+    -e PGID=0 \
+    -e UMASK=000 \
+    -e NASTOOL_AUTO_UPDATE=false \
+    nas-tools:source
+```
+
+也可使用 docker-compose，在仓库根目录执行：
+
+```
+docker compose -f docker/compose.source.yml up -d --build
+```
+
+**注意**
+
+- 构建时请确保 `third_party/feapder` 子模块内容已拉取（克隆时使用 `--recurse-submodule`，已克隆的可执行 `git submodule update --init --recursive` 补齐）；
+- 源码构建的镜像内不含 `.git`，容器的"在线更新/自动更新"功能不可用，`NASTOOL_AUTO_UPDATE` 请保持 `false`，程序更新请重新执行 `docker build` 并重建容器；
+- 国内网络构建时可追加构建参数加速依赖安装：
+  `--build-arg PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple --build-arg ALPINE_MIRROR=mirrors.ustc.edu.cn`。
+
 ## 后续如何更新
 
 - 正常情况下，如果设置了`NASTOOL_AUTO_UPDATE=true`，重启容器即可自动更新nas-tools程序。
