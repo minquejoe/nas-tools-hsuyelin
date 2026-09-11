@@ -2,13 +2,13 @@ version: "3"
 services:
   nas-tools:
     build:
-      # 构建上下文为仓库根目录，请在仓库根目录使用
-      #   docker compose -f docker/compose.source.yml up -d --build
-      context: ..
+      # 构建上下文为仓库根目录
+      context: .
       dockerfile: docker/Dockerfile.source
       args:
         - PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple   # 国内网络加速，海外可注释本行
         #- ALPINE_MIRROR=mirrors.ustc.edu.cn                      # 国内网络加速，海外可注释本行
+        #- REPO_URL=https://github.com/minquejoe/nas-tools-hsuyelin.git  # 容器内在线更新的代码来源，默认为本仓库
     image: nas-tools:source
     ports:
       - 3000:3000        # 默认的webui控制端口

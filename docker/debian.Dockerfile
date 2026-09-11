@@ -27,7 +27,7 @@ RUN set -xe && \
     # Pip requirements prepare
     apt-get install -y build-essential && \
     # Pip requirements
-    pip install --upgrade pip setuptools wheel && \
+    pip install --upgrade pip "setuptools<81" wheel \
     pip install cython && \
     pip install -r https://raw.githubusercontent.com/hsuyelin/nas-tools/master/requirements.txt && \
     # Clear

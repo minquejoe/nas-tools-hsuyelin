@@ -1,5 +1,4 @@
-# 版本控制与文档
-.git
+# 版本控制（.git 保留在镜像内以支持容器内在线更新，REPO_URL 指定更新来源）
 .github
 .gitignore
 *.md

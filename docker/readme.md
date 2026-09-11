@@ -76,8 +76,8 @@ services:
 
 ```
 # 克隆源码（含子模块）
-git clone -b master https://github.com/hsuyelin/nas-tools --recurse-submodule
-cd nas-tools
+git clone -b master https://github.com/minquejoe/nas-tools-hsuyelin --recurse-submodule
+cd nas-tools-hsuyelin
 
 # 构建镜像
 docker build -f docker/Dockerfile.source -t nas-tools:source .
@@ -99,13 +99,13 @@ docker run -d \
 也可使用 docker-compose，在仓库根目录执行：
 
 ```
-docker compose -f docker/compose.source.yml up -d --build
+docker compose up -d --build
 ```
 
 **注意**
 
 - 构建时请确保 `third_party/feapder` 子模块内容已拉取（克隆时使用 `--recurse-submodule`，已克隆的可执行 `git submodule update --init --recursive` 补齐）；
-- 源码构建的镜像内不含 `.git`，容器的"在线更新/自动更新"功能不可用，`NASTOOL_AUTO_UPDATE` 请保持 `false`，程序更新请重新执行 `docker build` 并重建容器；
+- 镜像内保留 `.git`，可正常使用webUI的"在线更新"及 `NASTOOL_AUTO_UPDATE=true` 启动自动更新，更新来源默认为本仓库，可通过构建参数 `--build-arg REPO_URL=...` 或运行时环境变量 `-e REPO_URL=...`（https协议地址）指定；
 - 国内网络构建时可追加构建参数加速依赖安装：
   `--build-arg PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple --build-arg ALPINE_MIRROR=mirrors.ustc.edu.cn`。
 

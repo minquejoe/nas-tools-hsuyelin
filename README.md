@@ -50,8 +50,8 @@ docker pull hsuyelin/nas-tools:latest
 
 ```
 # 克隆源码（含子模块）
-git clone -b master https://github.com/hsuyelin/nas-tools --recurse-submodule
-cd nas-tools
+git clone -b master https://github.com/minquejoe/nas-tools-hsuyelin --recurse-submodule
+cd nas-tools-hsuyelin
 
 # 构建镜像（国内网络可追加：--build-arg PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple --build-arg ALPINE_MIRROR=mirrors.ustc.edu.cn）
 docker build -f docker/Dockerfile.source -t nas-tools:source .
@@ -66,7 +66,7 @@ docker run -d \
     -e PUID=0     `# 运行程序的用户uid` \
     -e PGID=0     `# 运行程序的用户gid` \
     -e UMASK=000  `# 掩码权限，默认000，可以考虑设置为022` \
-    -e NASTOOL_AUTO_UPDATE=false `# 源码构建的镜像不含.git，自动更新不可用，请保持false` \
+    -e NASTOOL_AUTO_UPDATE=false `# 设置为true时，容器每次启动自动从REPO_URL拉取最新代码；false时可通过webUI"在线更新"手动升级` \
     nas-tools:source
 ```
 
@@ -81,7 +81,7 @@ docker compose -f docker/compose.source.yml up -d --build
 注意事项：
 
 * 构建时请确保 `third_party/feapder` 子模块内容已拉取（克隆时使用 `--recurse-submodule`，已克隆的可执行 `git submodule update --init --recursive` 补齐）；
-* 源码构建的镜像内不含 `.git`，容器内"在线更新/自动更新"功能不可用，程序更新请重新执行 `docker build` 并重建容器；
+* 镜像内保留 `.git`，支持容器内"在线更新"及 `NASTOOL_AUTO_UPDATE=true` 启动自动更新，更新来源默认为本仓库，可通过构建参数 `--build-arg REPO_URL=...` 或运行时环境变量 `-e REPO_URL=...`（https协议地址）指定，更新分支由 `NASTOOL_VERSION` 控制（默认master）；
 * 其余目录映射、环境变量说明与 [官方镜像](https://raw.githubusercontent.com/hsuyelin/nas-tools/master/docker/readme.md) 一致。
 
 ### 3、本地运行
