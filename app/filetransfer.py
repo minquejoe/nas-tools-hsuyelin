@@ -625,7 +625,9 @@ class FileTransfer:
             return __finish_transfer(True, msg)
 
         # 目录同步模式下，过滤掉文件列表中已处理过的
-        if in_from == SyncType.MON:
+        # 移动模式下文件成功转移后源文件已被移走，缓存中记录过的路径再次出现时，说明是重新下载/
+        # 重新生成的另一份文件，需要重新处理，否则会一直残留在下载目录中
+        if in_from == SyncType.MON and rmt_mode != RmtMode.MOVE:
             file_list = list(filter(self.dbhelper.is_transfer_notin_blacklist, file_list))
             if not file_list:
                 log.info("【Rmt】所有文件均已成功转移过，没有需要处理的文件！如需重新处理，请清理缓存（服务->清理转移缓存）")
@@ -771,6 +773,18 @@ class FileTransfer:
                                         alert_messages.append(error_message)
                                     continue
                                 handler_flag = True
+                            elif rmt_mode == RmtMode.MOVE and os.path.isfile(file_item) \
+                                    and media.size == orgin_file_size:
+                                # 移动模式下媒体库中已存在同样大小的文件，说明是一份重复文件（如重新下载产生），
+                                # 直接删除源文件，避免下载目录中一直残留同一份文件
+                                log.warn("【Rmt】文件 %s 已存在且大小相同，移动模式下删除重复的源文件：%s"
+                                         % (ret_file_path, file_item))
+                                try:
+                                    os.remove(file_item)
+                                except OSError as reason:
+                                    log.error("【Rmt】删除重复文件 %s 失败：%s" % (file_item, str(reason)))
+                                    failed_count += 1
+                                continue
                             else:
                                 log.warn("【Rmt】文件 %s 已存在" % ret_file_path)
                                 failed_count += 1

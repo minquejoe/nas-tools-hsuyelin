@@ -251,12 +251,14 @@ class Emby(_IMediaClient):
             log.error(f"【{self.client_name}】连接Items/Counts出错：" + str(e))
             return {}
 
-    def __get_emby_series_id_by_name(self, name, year):
+    def __get_emby_series_ids_by_name(self, name, year):
         """
-        根据名称查询Emby中剧集的SeriesId
+        根据名称查询Emby中剧集的全部SeriesId
+        同一部剧集被多个媒体库（或同一媒体库的多个路径）包含时，Emby中会存在多个同名的剧集条目，
+        每个条目只会刮削到自己路径下的集，因此这里需要返回所有匹配的条目，由调用方合并集数
         :param name: 标题
         :param year: 年份
-        :return: None 表示连不通，""表示未找到，找到返回ID
+        :return: None 表示连不通，[]表示未找到，找到返回ID列表
         """
         if not self._host or not self._apikey:
             return None
@@ -264,18 +266,34 @@ class Emby(_IMediaClient):
             self._host, name, self._apikey)
         try:
             res = RequestUtils().get_res(req_url)
-            if res:
-                res_items = res.json().get("Items")
-                if res_items:
-                    for res_item in res_items:
-                        if res_item.get('Name') == name and (
-                                not year or str(res_item.get('ProductionYear')) == str(year)):
-                            return res_item.get('Id')
+            if not res:
+                # 媒体服务器未返回数据（不可用或超时），返回None由调用方回退处理，避免误判为剧集不存在
+                log.warn(f"【{self.client_name}】emby/Items 未获取到返回数据，无法查询剧集：{name}")
+                return None
+            res_items = res.json().get("Items")
+            if res_items:
+                item_ids = []
+                for res_item in res_items:
+                    if res_item.get('Name') == name and (
+                            not year or str(res_item.get('ProductionYear')) == str(year)):
+                        item_id = res_item.get('Id')
+                        if item_id and item_id not in item_ids:
+                            item_ids.append(item_id)
+                return item_ids
         except Exception as e:
             ExceptionUtils.exception_traceback(e)
             log.error(f"【{self.client_name}】连接Items出错：" + str(e))
             return None
-        return ""
+        return []
+
+    def __get_emby_series_id_by_name(self, name, year):
+        """
+        根据名称查询Emby中剧集的SeriesId（只返回第一个匹配的条目）
+        """
+        item_ids = self.__get_emby_series_ids_by_name(name, year)
+        if not item_ids:
+            return item_ids
+        return item_ids[0]
 
     def get_movies(self, title, year=None):
         """
@@ -314,6 +332,8 @@ class Emby(_IMediaClient):
                         season=None):
         """
         根据标题和年份和季，返回Emby中的剧集列表
+        同一部剧集在Emby中存在多个同名条目时（比如同时被多个媒体库包含），
+        会查询所有条目并合并集数，避免已存在于其它条目中的集被误判为缺失
         :param item_id: 媒体源ID
         :param title: 标题
         :param year: 年份
@@ -324,38 +344,54 @@ class Emby(_IMediaClient):
         if not self._host or not self._apikey:
             return None
         # 电视剧
-        if not item_id:
-            item_id = self.__get_emby_series_id_by_name(title, year)
-            if item_id is None:
+        if item_id:
+            item_ids = [item_id]
+        else:
+            # 查TVID，同名剧集可能存在于多个媒体库中，需要全部取出
+            item_ids = self.__get_emby_series_ids_by_name(title, year)
+            if item_ids is None:
                 return None
-            if not item_id:
+            if not item_ids:
                 return []
-            # 验证tmdbid是否相同
-            item_tmdbid = self.get_iteminfo(item_id).get("ProviderIds", {}).get("Tmdb")
-            if tmdb_id and item_tmdbid:
-                if str(tmdb_id) != str(item_tmdbid):
-                    return []
+            if len(item_ids) > 1:
+                log.warn(f"【{self.client_name}】{title} ({year}) 在媒体服务器中存在 {len(item_ids)} 个同名剧集条目，"
+                         f"已合并集数处理，建议清理媒体库中的重复路径")
+            # 验证tmdbid是否相同，剔除同名但非同一部剧集的条目
+            matched_item_ids = []
+            for item in item_ids:
+                item_tmdbid = self.get_iteminfo(item).get("ProviderIds", {}).get("Tmdb")
+                if tmdb_id and item_tmdbid and str(tmdb_id) != str(item_tmdbid):
+                    log.warn(f"【{self.client_name}】{title} ({year}) 剧集条目 {item} 的TMDBID为 {item_tmdbid}，"
+                             f"与 {tmdb_id} 不一致，已忽略")
+                    continue
+                matched_item_ids.append(item)
+            item_ids = matched_item_ids
         # /Shows/Id/Episodes 查集的信息
         if not season:
             season = ""
-        req_url = "%semby/Shows/%s/Episodes?Season=%s&IsMissing=false&api_key=%s" % (
-            self._host, item_id, season, self._apikey)
-        try:
-            res_json = RequestUtils().get_res(req_url)
-            if res_json:
-                res_items = res_json.json().get("Items")
-                exists_episodes = []
+        # 合并所有剧集条目的集信息
+        exists_episodes = {}
+        for item in item_ids:
+            req_url = "%semby/Shows/%s/Episodes?Season=%s&IsMissing=false&api_key=%s" % (
+                self._host, item, season, self._apikey)
+            try:
+                res_json = RequestUtils().get_res(req_url)
+                if not res_json:
+                    log.warn(f"【{self.client_name}】Shows/{item}/Episodes 未获取到返回数据")
+                    continue
+                res_items = res_json.json().get("Items") or []
                 for res_item in res_items:
-                    exists_episodes.append({
-                        "season_num": res_item.get("ParentIndexNumber") or 0,
-                        "episode_num": res_item.get("IndexNumber") or 0
-                    })
-                return exists_episodes
-        except Exception as e:
-            ExceptionUtils.exception_traceback(e)
-            log.error(f"【{self.client_name}】连接Shows/Id/Episodes出错：" + str(e))
-            return None
-        return []
+                    season_num = res_item.get("ParentIndexNumber") or 0
+                    episode_num = res_item.get("IndexNumber") or 0
+                    exists_episodes[(season_num, episode_num)] = {
+                        "season_num": season_num,
+                        "episode_num": episode_num
+                    }
+            except Exception as e:
+                ExceptionUtils.exception_traceback(e)
+                log.error(f"【{self.client_name}】连接Shows/Id/Episodes出错：" + str(e))
+                return None
+        return list(exists_episodes.values())
 
     def get_no_exists_episodes(self, meta_info, season, total_num):
         """

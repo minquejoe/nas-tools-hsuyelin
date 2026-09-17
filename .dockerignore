@@ -26,6 +26,15 @@ __pycache__/
 /.vscode/
 config/sites.json
 
+# 运行时数据（通过volumes挂载，不能打进镜像：media体积巨大且config包含数据库与密钥，
+# 不排除会导致构建上下文过大、构建缓慢甚至失败）
+/media/
+/config/
+
+# 构建日志与本地docker配置
+/.build.log
+/.docker-tmp/
+
 # 前端构建产物
 /node_modules/
 package-lock.json
