@@ -1,5 +1,7 @@
 import datetime
+import difflib
 import os.path
+import re
 import time
 import json
 from enum import Enum
@@ -1159,6 +1161,104 @@ class DbHelper:
                 return None
         else:
             return None
+
+    def get_transfer_history_episodes(self, tmdbid=None, title=None, season=None):
+        """
+        查询转移历史中出现过的集号（含用户看后已删除的集），用于判断订阅已经下载到第几集
+        :param tmdbid: TMDBID
+        :param title: 媒体标题，TMDBID查不到时按名称相似度兜底（同一部剧译名/别名变化会对应不同TMDBID）
+        :param season: 季号，为空时不区分季
+        :return: 集号列表
+        """
+        if not tmdbid and not title:
+            return []
+        rows = []
+        if tmdbid:
+            try:
+                rows = self._db.query(TRANSFERHISTORY.TMDBID, TRANSFERHISTORY.TITLE,
+                                      TRANSFERHISTORY.SEASON_EPISODE).filter(
+                    TRANSFERHISTORY.TMDBID == int(tmdbid)).all()
+            except (TypeError, ValueError):
+                rows = []
+            except Exception as err:
+                ExceptionUtils.exception_traceback(err)
+                return []
+        if not rows and title:
+            rows = self.__get_transfer_history_by_similar_title(title)
+        season_flag = "S%s" % str(int(season)).zfill(2) if season else None
+        episodes = set()
+        for row in rows:
+            # 注意：SQLAlchemy的Row并不是tuple子类，这里按下标取值
+            try:
+                season_episode = row[-1]
+            except (TypeError, IndexError, KeyError):
+                season_episode = row
+            if not season_episode:
+                continue
+            season_episode = str(season_episode).replace(" ", "").upper()
+            if season_flag and not season_episode.startswith(season_flag):
+                continue
+            for match in re.finditer(r"E(\d{1,4})", season_episode):
+                episodes.add(int(match.group(1)))
+        return sorted(episodes)
+
+    @staticmethod
+    def __norm_media_name(name):
+        """
+        名称归一化：繁简统一、去空白与标点、转大写
+        """
+        if not name:
+            return ""
+        try:
+            import zhconv
+            name = zhconv.convert(str(name), "zh-cn")
+        except Exception:
+            pass
+        return re.sub(r"[\s\W_]+", "", str(name), flags=re.UNICODE).upper()
+
+    @staticmethod
+    def __similar_media_name(norm_name, norm_other):
+        """
+        判断两个已归一化的名称是否指向同一部剧（用于译名/别名变化导致的TMDBID不同）
+        要求整体相似度足够高且存在足够长的公共片段，避免把不相干的剧集错配
+        """
+        if not norm_name or not norm_other:
+            return False
+        if norm_name == norm_other:
+            return True
+        if min(len(norm_name), len(norm_other)) < 4:
+            return False
+        matcher = difflib.SequenceMatcher(None, norm_name, norm_other)
+        if matcher.ratio() < 0.85:
+            return False
+        longest = matcher.find_longest_match(0, len(norm_name), 0, len(norm_other)).size
+        return longest >= max(3, int(min(len(norm_name), len(norm_other)) * 0.6))
+
+    def __get_transfer_history_by_similar_title(self, title):
+        """
+        按名称相似度查询转移历史（用于同一部剧译名变化导致TMDBID不同的情况）
+        """
+        norm_title = self.__norm_media_name(title)
+        if len(norm_title) < 4:
+            return []
+        try:
+            all_rows = self._db.query(TRANSFERHISTORY.TMDBID, TRANSFERHISTORY.TITLE,
+                                      TRANSFERHISTORY.SEASON_EPISODE).all()
+        except Exception as err:
+            ExceptionUtils.exception_traceback(err)
+            return []
+        rows = []
+        for row in all_rows:
+            try:
+                row_title = row[1]
+            except (TypeError, IndexError, KeyError):
+                row_title = None
+            norm_row_title = self.__norm_media_name(row_title)
+            if not norm_row_title or len(norm_row_title) < 4:
+                continue
+            if self.__similar_media_name(norm_row_title, norm_title):
+                rows.append(row)
+        return rows
 
     @DbPersist(_db)
     def delete_rss_tv_episodes(self, rid):

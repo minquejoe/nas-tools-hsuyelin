@@ -1,3 +1,4 @@
+import datetime
 import json
 from threading import Lock
 
@@ -13,13 +14,15 @@ from app.message import Message
 from app.plugins import EventManager
 from app.searcher import Searcher
 from app.sites import Sites
-from app.utils import Torrent
 from app.utils.commons import singleton
 from app.utils.types import MediaType, SearchType, EventType, SystemConfigKey, RssType
 from web.backend.web_utils import WebUtils
 from config import Config
 
 lock = Lock()
+
+# 【只追新不补旧】媒体库中缺失但播出时间超过该天数的旧集，不再重新下载
+RSS_NEW_EPISODE_DAYS = 14
 
 
 @singleton
@@ -981,15 +984,30 @@ class Subscribe:
                             self.finish_rss_subscribe(rssid=rss_info.get("id"),
                                                       media=media_info)
                         continue
-                    # 取交集做为缺失集
-                    rss_no_exists = Torrent.get_intersection_episodes(target=rss_no_exists,
-                                                                      source=library_no_exists,
-                                                                      title=media_info.tmdb_id)
-                    if rss_no_exists.get(media_info.tmdb_id):
-                        log.info("【Subscribe】%s 订阅缺失季集：%s" % (
-                            media_info.get_title_string(),
-                            rss_no_exists.get(media_info.tmdb_id)
-                        ))
+                    # 只追新不补旧：媒体库中缺失且比已处理进度更新、最近播出的集才下载
+                    download_episodes = self.get_subscribe_download_episodes(
+                        tmdbid=media_info.tmdb_id,
+                        season=season,
+                        library_no_exists=library_no_exists,
+                        total_ep=total_ep,
+                        current_ep=current_ep,
+                        title=media_info.title or name)
+                    if not download_episodes:
+                        log.info("【Subscribe】%s 媒体库中缺失的集均已看过（只追新不补旧），跳过搜索" % (
+                            media_info.get_title_string()))
+                        self.dbhelper.update_rss_tv_state(rssid=rssid, state='R')
+                        continue
+                    rss_no_exists[media_info.tmdb_id] = [
+                        {
+                            "season": season,
+                            "episodes": download_episodes,
+                            "total_episodes": total_ep
+                        }
+                    ]
+                    log.info("【Subscribe】%s 订阅待下载季集：%s" % (
+                        media_info.get_title_string(),
+                        rss_no_exists.get(media_info.tmdb_id)
+                    ))
                 else:
                     # 把洗版标志加入检索
                     media_info.over_edition = over_edition
@@ -1121,6 +1139,98 @@ class Subscribe:
         查询数据库中订阅的电视剧缺失集数
         """
         return self.dbhelper.get_rss_tv_episodes(rssid)
+
+    def get_subscribe_download_episodes(self, tmdbid, season, library_no_exists, total_ep=None, current_ep=None,
+                                        title=None):
+        """
+        计算订阅本轮真正需要下载的集数：只追新、不补旧。
+        很多用户看完一集就删除一集，媒体库里缺失的旧集并不代表还需要下载，因此需要：
+          1、媒体库中确实缺失的集
+          2、比"已处理进度"更新的集：进度取媒体库中现存的集、转移历史中出现过的集（看后删除的集也算已处理）
+             以及订阅设置的开始集数，避免把已经看过的旧集重新下载一遍
+          3、只保留最近播出的集：很久以前播出的旧集不再补下（播出日期未知或未播出的按需要处理）
+        :param tmdbid: TMDBID
+        :param season: 季号
+        :param library_no_exists: check_exists_medias返回的媒体库缺失季集信息
+        :param total_ep: 该季总集数
+        :param current_ep: 订阅设置的开始集数
+        :param title: 媒体标题，用于按名称匹配转移历史
+        :return: 需要下载的集号列表
+        """
+        # 媒体库中缺失的集（兼容TMDBID与媒体库检查结果键的类型差异）
+        keys = [tmdbid, str(tmdbid)]
+        try:
+            keys.append(int(tmdbid))
+        except (TypeError, ValueError):
+            pass
+        library_items = []
+        for key in keys:
+            library_items = (library_no_exists or {}).get(key) or []
+            if library_items:
+                break
+        missing = set()
+        season_total = 0
+        for item in library_items:
+            if not item:
+                continue
+            try:
+                item_season = int(str(item.get("season") or 1).replace("S", ""))
+            except (TypeError, ValueError):
+                item_season = 1
+            if item_season != int(season):
+                continue
+            episodes = set(item.get("episodes") or [])
+            # 该季的实际集数（以媒体库检查结果为准，订阅的TOTAL可能被Bangumi等放大）
+            if item.get("total_episodes"):
+                try:
+                    season_total = max(season_total, int(item["total_episodes"]))
+                except (TypeError, ValueError):
+                    pass
+            if item.get("all_missing") and item.get("total_episodes"):
+                episodes |= set(range(1, int(item["total_episodes"]) + 1))
+            missing |= episodes
+        if not missing:
+            return []
+        if not season_total:
+            season_total = max(missing)
+        # 已处理进度：媒体库中已存在的集 + 转移历史中出现过的集 + 订阅设置的开始集数
+        known = set(range(1, season_total + 1)) - missing
+        known |= set(self.dbhelper.get_transfer_history_episodes(tmdbid=tmdbid, season=season, title=title))
+        if current_ep:
+            try:
+                known.add(int(current_ep) - 1)
+            except (TypeError, ValueError):
+                pass
+        progress = max(known) if known else 0
+        # 每集播出日期，缺失的按上一集+7天推算，避免老剧尾集无日期被当成新集
+        air_dates = {}
+        for episode in self.media.get_tmdb_season_episodes(tmdbid=tmdbid, season=int(season)):
+            if episode.get("episode_number"):
+                air_dates[int(episode["episode_number"])] = episode.get("air_date")
+        last_date = None
+        for episode in range(1, max(season_total, max(missing)) + 1):
+            air_date = air_dates.get(episode)
+            if air_date:
+                last_date = air_date
+            elif last_date:
+                try:
+                    air_dates[episode] = (datetime.datetime.strptime(str(last_date), "%Y-%m-%d")
+                                          + datetime.timedelta(days=7)).strftime("%Y-%m-%d")
+                except (TypeError, ValueError):
+                    pass
+                last_date = air_dates.get(episode) or last_date
+        expire_date = (datetime.date.today() - datetime.timedelta(days=RSS_NEW_EPISODE_DAYS)).strftime("%Y-%m-%d")
+        download_episodes = []
+        for episode in sorted(missing):
+            # 已经处理过的集（含看后删除的）不再补下
+            if episode <= progress:
+                continue
+            air_date = air_dates.get(episode)
+            # 很久以前播出的旧集不再补下
+            if air_date and str(air_date) < expire_date:
+                continue
+            download_episodes.append(episode)
+        return download_episodes
 
     def check_history(self, type_str, name, year, season):
         """

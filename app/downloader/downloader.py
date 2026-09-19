@@ -815,12 +815,13 @@ class Downloader:
         # 电视剧整季匹配
         if need_tvs:
             # 先把整季缺失的拿出来，看是否刚好有所有季都满足的种子
+            # 注意：只有明确标记 all_missing 的条目才是"整季都缺失"；缺失集列表为空表示没有需要下载的集
             need_seasons = {}
             for need_tmdbid, need_tv in need_tvs.items():
                 for tv in need_tv:
                     if not tv:
                         continue
-                    if not tv.get("episodes"):
+                    if tv.get("all_missing"):
                         if not need_seasons.get(need_tmdbid):
                             need_seasons[need_tmdbid] = []
                         need_seasons[need_tmdbid].append(tv.get("season") or 1)
@@ -870,8 +871,11 @@ class Downloader:
                     need_season = tv.get("season") or 1
                     need_episodes = tv.get("episodes")
                     total_episodes = tv.get("total_episodes")
-                    # 缺失整季的转化为缺失集进行比较
+                    # 缺失整季的（all_missing标记）转化为缺失集进行比较；
+                    # 缺失集列表为空且非整季缺失时表示没有需要下载的集，直接跳过
                     if not need_episodes:
+                        if not tv.get("all_missing"):
+                            continue
                         need_episodes = list(range(1, (total_episodes or 0) + 1))
                         if not need_episodes:
                             continue
@@ -1052,7 +1056,9 @@ class Downloader:
                             exists_tvs_str = "、".join(["%s" % tv for tv in no_exists_episodes])
                             # 存入总缺失集
                             if len(no_exists_episodes) >= episode_count:
-                                no_item = {"season": season_number, "episodes": [], "total_episodes": episode_count}
+                                # 整季都缺失时用 all_missing 标记，避免与"没有缺失集（空列表）"混淆
+                                no_item = {"season": season_number, "episodes": [], "total_episodes": episode_count,
+                                           "all_missing": True}
                                 log.info(
                                     "【Downloader】%s 第%s季 缺失 %s 集" % (
                                         meta_info.get_title_string(), season_number, episode_count))

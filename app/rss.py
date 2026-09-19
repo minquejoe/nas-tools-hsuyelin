@@ -10,7 +10,7 @@ from app.media.meta import MetaInfo
 from app.message import Message
 from app.sites import Sites, SiteConf
 from app.subscribe import Subscribe
-from app.utils import ExceptionUtils, Torrent
+from app.utils import ExceptionUtils
 from app.utils.commons import singleton
 from app.utils.types import MediaType, SearchType
 
@@ -229,41 +229,34 @@ class Rss:
                                     total_ep = match_info.get("total")
                                     # 设定的开始集数
                                     current_ep = match_info.get("current_ep")
-                                    # 表登记的缺失集数
-                                    episodes = self.subscribe.get_subscribe_tv_episodes(match_info.get("id"))
-                                    if episodes is None:
-                                        episodes = []
-                                        if current_ep:
-                                            episodes = list(range(int(current_ep), int(total_ep) + 1))
-                                        rss_no_exists[media_info.tmdb_id] = [
-                                            {
-                                                "season": season,
-                                                "episodes": episodes,
-                                                "total_episodes": total_ep
-                                            }
-                                        ]
-                                    else:
-                                        rss_no_exists[media_info.tmdb_id] = [
-                                            {
-                                                "season": season,
-                                                "episodes": episodes,
-                                                "total_episodes": total_ep
-                                            }
-                                        ]
                                     # 检查本地媒体库情况
                                     exist_flag, library_no_exists, _ = self.downloader.check_exists_medias(
                                         meta_info=media_info,
-                                        total_ep={season: total_ep}
+                                        total_ep={season: total_ep} if total_ep else None
                                     )
-                                    # 取交集做为缺失集
-                                    rss_no_exists = Torrent.get_intersection_episodes(target=rss_no_exists,
-                                                                                      source=library_no_exists,
-                                                                                      title=media_info.tmdb_id)
-                                    if rss_no_exists.get(media_info.tmdb_id):
-                                        log.info("【Rss】%s 订阅缺失季集：%s" % (
-                                            media_info.get_title_string(),
-                                            rss_no_exists.get(media_info.tmdb_id)
-                                        ))
+                                    # 只追新不补旧：媒体库中缺失且比已处理进度更新、最近播出的集才下载
+                                    download_episodes = self.subscribe.get_subscribe_download_episodes(
+                                        tmdbid=media_info.tmdb_id,
+                                        season=season,
+                                        library_no_exists=library_no_exists,
+                                        total_ep=total_ep,
+                                        current_ep=current_ep,
+                                        title=media_info.title)
+                                    if not download_episodes:
+                                        log.info("【Rss】%s 媒体库中缺失的集均已看过（只追新不补旧），忽略该资源"
+                                                 % media_info.get_title_string())
+                                        continue
+                                    rss_no_exists[media_info.tmdb_id] = [
+                                        {
+                                            "season": season,
+                                            "episodes": download_episodes,
+                                            "total_episodes": total_ep
+                                        }
+                                    ]
+                                    log.info("【Rss】%s 订阅待下载季集：%s" % (
+                                        media_info.get_title_string(),
+                                        rss_no_exists.get(media_info.tmdb_id)
+                                    ))
                                 # 本地已存在
                                 if exist_flag:
                                     continue
