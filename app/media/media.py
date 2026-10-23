@@ -2,6 +2,7 @@ import difflib
 import os
 import random
 import re
+import time
 import traceback
 from functools import lru_cache
 
@@ -21,6 +22,8 @@ from config import Config, KEYWORD_BLACKLIST, KEYWORD_SEARCH_WEIGHT_3, KEYWORD_S
 
 
 class Media:
+    # 季集信息短期缓存（TMDB偶发超时时避免整轮订阅搜索都拿不到播出日期）
+    _season_episodes_cache = {}
     # TheMovieDB
     tmdb = None
     search = None
@@ -1669,13 +1672,18 @@ class Media:
         """
         if not self.tv:
             return {}
-        try:
-            log.info("【Meta】正在查询TMDB电视剧：%s，季：%s ..." % (tmdbid, season))
-            tmdbinfo = self.tv.season_details(tmdbid, season)
-            return tmdbinfo or {}
-        except Exception as e:
-            print(str(e))
-            return {}
+        for attempt in range(2):
+            try:
+                log.info("【Meta】正在查询TMDB电视剧：%s，季：%s ..." % (tmdbid, season))
+                tmdbinfo = self.tv.season_details(tmdbid, season)
+                return tmdbinfo or {}
+            except Exception as e:
+                if attempt == 0:
+                    log.warn("【Meta】查询TMDB电视剧季信息失败，1秒后重试：%s" % str(e))
+                    time.sleep(1)
+                    continue
+                log.error("【Meta】查询TMDB电视剧季信息失败：%s" % str(e))
+                return {}
 
     def get_tmdb_tv_seasons_byid(self, tmdbid):
         """
@@ -1734,6 +1742,8 @@ class Media:
                 "season_number": info.get("season_number")
             })
         ret_info.reverse()
+        if ret_info:
+            self._season_episodes_cache[cache_key] = (time.time(), ret_info)
         return ret_info
 
     def get_tmdb_season_episodes(self, tmdbid, season: int):
@@ -1764,6 +1774,10 @@ class Media:
         """
         if not tmdbid:
             return []
+        cache_key = (str(tmdbid), int(season))
+        cached = self._season_episodes_cache.get(cache_key)
+        if cached and time.time() - cached[0] < 6 * 3600:
+            return cached[1]
         season_info = self.get_tmdb_tv_season_detail(tmdbid=tmdbid, season=season)
         if not season_info:
             return []

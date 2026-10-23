@@ -23,6 +23,8 @@ lock = Lock()
 
 # 【只追新不补旧】媒体库中缺失但播出时间超过该天数的旧集，不再重新下载
 RSS_NEW_EPISODE_DAYS = 14
+# 【只追新不补旧】单轮最多补下的集数（防止TMDB季信息查询失败或季号识别异常时一次性下载整季）
+RSS_NEW_EPISODE_MAX_BATCH = 3
 
 
 @singleton
@@ -1219,6 +1221,9 @@ class Subscribe:
                 except (TypeError, ValueError):
                     pass
                 last_date = air_dates.get(episode) or last_date
+        if not air_dates:
+            # 查询TMDB季信息失败时不能把整季都当成需要下载，本轮按只追新处理
+            log.warn("【Subscribe】%s 第%s季 未获取到TMDB播出日期，本轮仅追最新集" % (title or tmdbid, season))
         expire_date = (datetime.date.today() - datetime.timedelta(days=RSS_NEW_EPISODE_DAYS)).strftime("%Y-%m-%d")
         download_episodes = []
         for episode in sorted(missing):
@@ -1230,6 +1235,13 @@ class Subscribe:
             if air_date and str(air_date) < expire_date:
                 continue
             download_episodes.append(episode)
+        # 单轮下载数量保护：未显式设置开始集数时只取最新的若干集，
+        # 避免TMDB播出日期缺失等异常情况下一次性补下整季（设置了开始集数则按用户意图处理）
+        if not current_ep and len(download_episodes) > RSS_NEW_EPISODE_MAX_BATCH:
+            log.warn("【Subscribe】%s 第%s季 本轮待下载集数过多（%s集），仅下载最新 %s 集：%s" % (
+                title or tmdbid, season, len(download_episodes), RSS_NEW_EPISODE_MAX_BATCH,
+                download_episodes[-RSS_NEW_EPISODE_MAX_BATCH:]))
+            download_episodes = download_episodes[-RSS_NEW_EPISODE_MAX_BATCH:]
         return download_episodes
 
     def check_history(self, type_str, name, year, season):

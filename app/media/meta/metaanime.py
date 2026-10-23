@@ -67,6 +67,18 @@ class MetaAnime(MetaBase):
                             fallback_name = item
                     if (not name or name in self._anime_no_words) and fallback_name:
                         name = fallback_name
+                # 罗马数字季号：如 "Katainaka no Ossan, Kensei ni Naru II [10]"，
+                # anitopy不会把标题末尾的II/III识别为季号，这里补充识别并去掉后缀，
+                # 避免第二季的集被当成第一季归档，导致订阅反复重新下载
+                roman_season = None
+                if name and not anitopy_info.get("anime_season") and anitopy_info.get("episode_number"):
+                    roman_match = re.search(r"[\s\-–—,.]+(II|III|IV|V|VI|VII|VIII|IX|X)$", name, re.I)
+                    if roman_match:
+                        roman_season = self.__roman_to_season(roman_match.group(1))
+                        if roman_season and roman_season > 1:
+                            name = name[:roman_match.start()].strip()
+                        else:
+                            roman_season = None
                 # 拆份中英文名称
                 if name:
                     lastword_type = ""
@@ -100,6 +112,8 @@ class MetaAnime(MetaBase):
                     self.year = str(year)
                 # 季号
                 anime_season = anitopy_info.get("anime_season")
+                if not anime_season and roman_season:
+                    anime_season = roman_season
                 if isinstance(anime_season, list):
                     if len(anime_season) == 1:
                         begin_season = anime_season[0]
@@ -191,6 +205,23 @@ class MetaAnime(MetaBase):
                 self.type = MediaType.TV
         except Exception as e:
             ExceptionUtils.exception_traceback(e)
+
+
+    @staticmethod
+    def __roman_to_season(roman):
+        """
+        罗马数字转季号：II->2, III->3, IV->4 ...
+        """
+        values = {"I": 1, "V": 5, "X": 10}
+        roman = str(roman or "").upper()
+        total = 0
+        for index, char in enumerate(roman):
+            value = values.get(char, 0)
+            if index + 1 < len(roman) and values.get(roman[index + 1], 0) > value:
+                total -= value
+            else:
+                total += value
+        return total
 
     @staticmethod
     def __prepare_title(title):

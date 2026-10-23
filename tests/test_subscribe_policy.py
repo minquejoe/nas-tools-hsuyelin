@@ -186,6 +186,19 @@ class SubscribeNewEpisodePolicyTest(TestCase):
         self.assertEqual([], episodes)
 
 
+    def test_max_batch_limit_without_air_dates(self):
+        """
+        TMDB季信息查询失败（拿不到播出日期）时，单轮也不能一次补下整季，只取最新的若干集
+        """
+        library_no_exists = {1: [{"season": 1, "episodes": [], "total_episodes": 12, "all_missing": True}]}
+        subscribe = _make_subscribe(history=[1, 2, 3], air_dates={})
+        episodes = subscribe.get_subscribe_download_episodes(tmdbid=1,
+                                                             season=1,
+                                                             library_no_exists=library_no_exists,
+                                                             total_ep=12)
+        self.assertEqual([10, 11, 12], episodes)
+
+
 class _FakeRow:
     """模拟SQLAlchemy的Row：支持下标访问但不是tuple子类"""
 
