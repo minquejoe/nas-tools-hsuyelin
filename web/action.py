@@ -2170,23 +2170,29 @@ class WebAction:
         if target == "qyapi.weixin.qq.com":
             target = target + "/cgi-bin/message/send"
         target = "https://" + target
+        # 已配置代理时优先走代理，代理不通再回退直连，避免代理故障时误报网络不通
+        proxies = Config().get_proxies() or {}
+        routes = []
+        if proxies.get("http") or proxies.get("https"):
+            routes.append((proxies, "代理"))
+        routes.append((None, "直连"))
         start_time = datetime.datetime.now()
-        if target.find("themoviedb") != -1 \
-                or target.find("telegram") != -1 \
-                or target.find("fanart") != -1 \
-                or target.find("tmdb") != -1:
-            res = RequestUtils(proxies=Config().get_proxies(),
-                               timeout=5).get_res(target)
-        else:
-            res = RequestUtils(timeout=5).get_res(target)
-        seconds = int((datetime.datetime.now() -
-                       start_time).microseconds / 1000)
-        if not res:
-            return {"res": False, "time": "%s 毫秒" % seconds}
-        elif res.ok:
-            return {"res": True, "time": "%s 毫秒" % seconds}
-        else:
-            return {"res": False, "time": "%s 毫秒" % seconds}
+        res = None
+        route_name = ""
+        for proxy, name in routes:
+            try:
+                res = RequestUtils(proxies=proxy, timeout=10).get_res(target)
+            except Exception as err:
+                res = None
+            # 只要收到HTTP响应就说明连通（403/401等业务层状态码也代表网络可达）
+            if res is not None:
+                route_name = "%s，HTTP %s" % (name, res.status_code)
+                break
+        # 用total_seconds计算，原来用microseconds会把超过1秒的耗时算错
+        seconds = int((datetime.datetime.now() - start_time).total_seconds() * 1000)
+        if res is not None:
+            return {"res": True, "time": "%s 毫秒（%s）" % (seconds, route_name)}
+        return {"res": False, "time": "%s 毫秒" % seconds}
 
     @staticmethod
     def __get_site_activity(data):
