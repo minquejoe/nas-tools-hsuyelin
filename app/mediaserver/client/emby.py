@@ -344,6 +344,7 @@ class Emby(_IMediaClient):
         if not self._host or not self._apikey:
             return None
         # 电视剧
+        alias_matched = False
         if item_id:
             item_ids = [item_id]
         else:
@@ -351,14 +352,26 @@ class Emby(_IMediaClient):
             item_ids = self.__get_emby_series_ids_by_name(title, year)
             if item_ids is None:
                 return None
+            if not item_ids and title:
+                # 剧名不一致时用别名再找一次：译名、日文名，或TMDB上同一部剧存在重复条目导致
+                # 媒体库文件夹名与订阅名不同（否则会误判为整季缺失，导致反复重新下载）
+                for alias in self.__get_series_aliases(title, year, tmdb_id):
+                    item_ids = self.__get_emby_series_ids_by_name(alias, None)
+                    if item_ids:
+                        alias_matched = True
+                        log.info(f"【{self.client_name}】{title} 未匹配到剧集，使用别名「{alias}」匹配到 {len(item_ids)} 个条目")
+                        break
             if not item_ids:
                 return []
             if len(item_ids) > 1:
                 log.warn(f"【{self.client_name}】{title} ({year}) 在媒体服务器中存在 {len(item_ids)} 个同名剧集条目，"
                          f"已合并集数处理，建议清理媒体库中的重复路径")
-            # 验证tmdbid是否相同，剔除同名但非同一部剧集的条目
+            # 验证tmdbid是否相同，剔除同名但非同一部剧集的条目（别名匹配跳过，可能是重复TMDB条目）
             matched_item_ids = []
             for item in item_ids:
+                if alias_matched:
+                    matched_item_ids.append(item)
+                    continue
                 item_tmdbid = self.get_iteminfo(item).get("ProviderIds", {}).get("Tmdb")
                 if tmdb_id and item_tmdbid and str(tmdb_id) != str(item_tmdbid):
                     log.warn(f"【{self.client_name}】{title} ({year}) 剧集条目 {item} 的TMDBID为 {item_tmdbid}，"
@@ -392,6 +405,34 @@ class Emby(_IMediaClient):
                 log.error(f"【{self.client_name}】连接Shows/Id/Episodes出错：" + str(e))
                 return None
         return list(exists_episodes.values())
+
+    def __get_series_aliases(self, title, year, tmdb_id):
+        """
+        获取同一部剧的其它名称（TMDB译名、Bangumi别名），用于媒体服务器中剧名不一致时的兜底匹配
+        """
+        aliases = []
+
+        def add(alias):
+            alias = str(alias or "").strip()
+            if alias and alias != title and alias not in aliases:
+                aliases.append(alias)
+
+        try:
+            from app.media import Media
+            media = Media()
+            if tmdb_id:
+                try:
+                    alt_titles = media.tv.alternative_titles(tmdb_id) or {}
+                    for item in (alt_titles.get("results") or alt_titles.get("titles") or []):
+                        if isinstance(item, dict):
+                            add(item.get("title"))
+                except Exception as err:
+                    ExceptionUtils.exception_traceback(err)
+            for alias in media.get_bangumi_subject_names(title, year) or []:
+                add(alias)
+        except Exception as err:
+            ExceptionUtils.exception_traceback(err)
+        return aliases[:6]
 
     def get_no_exists_episodes(self, meta_info, season, total_num):
         """

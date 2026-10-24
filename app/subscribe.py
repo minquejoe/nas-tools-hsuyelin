@@ -1197,7 +1197,18 @@ class Subscribe:
             season_total = max(missing)
         # 已处理进度：媒体库中已存在的集 + 转移历史中出现过的集 + 订阅设置的开始集数
         known = set(range(1, season_total + 1)) - missing
-        known |= set(self.dbhelper.get_transfer_history_episodes(tmdbid=tmdbid, season=season, title=title))
+        # 同一部剧在TMDB上可能存在重复条目（识别时可能落到另一个TMDBID下），转移历史按原名/别名一并查询
+        extra_titles = []
+        try:
+            tv_info = self.media.get_tmdb_info(mtype=MediaType.TV, tmdbid=tmdbid) or {}
+            for alias in (tv_info.get("name"), tv_info.get("original_name")):
+                alias = str(alias or "").strip()
+                if alias and alias != title and alias not in extra_titles:
+                    extra_titles.append(alias)
+        except Exception as err:
+            ExceptionUtils.exception_traceback(err)
+        known |= set(self.dbhelper.get_transfer_history_episodes(tmdbid=tmdbid, season=season, title=title,
+                                                                 extra_titles=extra_titles))
         if current_ep:
             try:
                 known.add(int(current_ep) - 1)

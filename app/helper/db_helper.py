@@ -1162,12 +1162,13 @@ class DbHelper:
         else:
             return None
 
-    def get_transfer_history_episodes(self, tmdbid=None, title=None, season=None):
+    def get_transfer_history_episodes(self, tmdbid=None, title=None, season=None, extra_titles=None):
         """
         查询转移历史中出现过的集号（含用户看后已删除的集），用于判断订阅已经下载到第几集
         :param tmdbid: TMDBID
         :param title: 媒体标题，TMDBID查不到时按名称相似度兜底（同一部剧译名/别名变化会对应不同TMDBID）
         :param season: 季号，为空时不区分季
+        :param extra_titles: 同一部剧的其它名称（原名/别名），TMDB存在重复条目时历史记录可能记在别的名称下
         :return: 集号列表
         """
         if not tmdbid and not title:
@@ -1185,6 +1186,28 @@ class DbHelper:
                 return []
         if not rows and title:
             rows = self.__get_transfer_history_by_similar_title(title)
+        # 按别名/原名再查一次并合并，避免同一部剧因重复TMDB条目导致已看过的集查不到
+        merged_rows = list(rows)
+        known_keys = set()
+        for row in merged_rows:
+            try:
+                known_keys.add(tuple(row))
+            except TypeError:
+                pass
+        for alias in [title] + list(extra_titles or []):
+            if not alias:
+                continue
+            for row in self.__get_transfer_history_by_similar_title(alias):
+                try:
+                    key = tuple(row)
+                except TypeError:
+                    key = None
+                if key is not None and key in known_keys:
+                    continue
+                if key is not None:
+                    known_keys.add(key)
+                merged_rows.append(row)
+        rows = merged_rows
         season_flag = "S%s" % str(int(season)).zfill(2) if season else None
         episodes = set()
         for row in rows:

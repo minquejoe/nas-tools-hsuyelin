@@ -40,26 +40,36 @@ def _raw_class(factory):
 
 
 class _FakeDbHelper:
-    def __init__(self, history=None):
+    def __init__(self, history=None, alias_history=None):
         self._history = history or []
+        self._alias_history = alias_history or []
 
-    def get_transfer_history_episodes(self, tmdbid=None, title=None, season=None):
+    def get_transfer_history_episodes(self, tmdbid=None, title=None, season=None, extra_titles=None):
+        # 传了别名（说明TMDB存在重复条目）时返回记在另一个名称下的历史
+        if extra_titles and self._alias_history:
+            return list(self._alias_history)
         return list(self._history)
 
 
 class _FakeMedia:
-    def __init__(self, air_dates=None):
+    def __init__(self, air_dates=None, original_name=None):
         self._air_dates = air_dates or {}
+        self._original_name = original_name
 
     def get_tmdb_season_episodes(self, tmdbid=None, season=1):
         return [{"episode_number": ep, "air_date": air} for ep, air in self._air_dates.items()]
 
+    def get_tmdb_info(self, mtype=None, tmdbid=None):
+        if self._original_name:
+            return {"name": "主标题", "original_name": self._original_name}
+        return {}
 
-def _make_subscribe(history=None, air_dates=None):
+
+def _make_subscribe(history=None, air_dates=None, alias_history=None, original_name=None):
     raw_class = _raw_class(Subscribe)
     subscribe = raw_class.__new__(raw_class)
-    subscribe.dbhelper = _FakeDbHelper(history=history)
-    subscribe.media = _FakeMedia(air_dates=air_dates)
+    subscribe.dbhelper = _FakeDbHelper(history=history, alias_history=alias_history)
+    subscribe.media = _FakeMedia(air_dates=air_dates, original_name=original_name)
     return subscribe
 
 
@@ -198,6 +208,22 @@ class SubscribeNewEpisodePolicyTest(TestCase):
                                                              total_ep=12)
         self.assertEqual([10, 11, 12], episodes)
 
+
+    def test_history_under_duplicate_tmdb_entry_is_used(self):
+        """
+        TMDB上同一部剧存在重复条目时，已看过的集可能记在另一个TMDBID/名称下，
+        按原名与别名一并查询转移历史，已看过的集不再重新下载
+        """
+        library_no_exists = {1: [{"season": 1, "episodes": [], "total_episodes": 6, "all_missing": True}]}
+        air_dates = {ep: _days_ago(2) for ep in range(1, 7)}
+        # 主标题下没有历史记录，原名（重复条目）下记录了 1-5 集
+        subscribe = _make_subscribe(history=[], air_dates=air_dates,
+                                    alias_history=[1, 2, 3, 4, 5], original_name="日文原名")
+        episodes = subscribe.get_subscribe_download_episodes(tmdbid=1,
+                                                             season=1,
+                                                             library_no_exists=library_no_exists,
+                                                             total_ep=6)
+        self.assertEqual([6], episodes)
 
 class _FakeRow:
     """模拟SQLAlchemy的Row：支持下标访问但不是tuple子类"""
