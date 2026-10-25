@@ -83,8 +83,8 @@ class SubscribeNewEpisodePolicyTest(TestCase):
             296101: [{"season": 1, "episodes": [1, 2, 3, 4, 5, 6, 7, 8, 9, 12, 13], "total_episodes": 13}]
         }
         air_dates = {ep: _days_ago(70 - ep * 7) for ep in range(1, 12)}
-        air_dates[12] = _days_later(1)
-        air_dates[13] = _days_later(8)
+        air_dates[12] = _days_ago(1)
+        air_dates[13] = _days_ago(8)
         subscribe = _make_subscribe(history=list(range(1, 12)), air_dates=air_dates)
         episodes = subscribe.get_subscribe_download_episodes(tmdbid=296101,
                                                              season=1,
@@ -173,8 +173,8 @@ class SubscribeNewEpisodePolicyTest(TestCase):
             296101: [{"season": 1, "episodes": [1, 2, 3, 4, 5, 6, 7, 8, 9, 12, 13], "total_episodes": 13}]
         }
         air_dates = {ep: _days_ago(70 - ep * 7) for ep in range(1, 12)}
-        air_dates[12] = _days_later(1)
-        air_dates[13] = _days_later(8)
+        air_dates[12] = _days_ago(1)
+        air_dates[13] = _days_ago(8)
         subscribe = _make_subscribe(history=list(range(1, 12)), air_dates=air_dates)
         episodes = subscribe.get_subscribe_download_episodes(tmdbid=296101,
                                                              season=1,

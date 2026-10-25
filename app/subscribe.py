@@ -1115,6 +1115,12 @@ class Subscribe:
         if not seasoninfo:
             return
         self.dbhelper.update_rss_tv_state(rssid=rssid, state='R')
+        lack_episodes = getattr(self, "_lack_episodes", None)
+        if lack_episodes:
+            log.info("【Subscribe】更新电视剧 %s %s 缺失集数为 %s" % (
+                media_info.get_title_string(), media_info.get_season_string(), len(lack_episodes)))
+            self.dbhelper.update_rss_tv_lack(rssid=rssid, lack_episodes=lack_episodes)
+            return
         for info in seasoninfo:
             if str(info.get("season")) == media_info.get_season_seq():
                 if info.get("episodes"):
@@ -1215,6 +1221,12 @@ class Subscribe:
             except (TypeError, ValueError):
                 pass
         progress = max(known) if known else 0
+        # 订阅界面显示"已下载 x/总集数"用的是 总集数-缺失集数，
+        # 因此缺失集数应记录"尚未处理到的集"（含未播出的），而不是本轮要下载的集
+        try:
+            self._lack_episodes = list(range(progress + 1, int(total_ep or season_total or max(missing)) + 1))
+        except (TypeError, ValueError):
+            self._lack_episodes = []
         # 每集播出日期，缺失的按上一集+7天推算，避免老剧尾集无日期被当成新集
         air_dates = {}
         for episode in self.media.get_tmdb_season_episodes(tmdbid=tmdbid, season=int(season)):
@@ -1244,6 +1256,9 @@ class Subscribe:
             air_date = air_dates.get(episode)
             # 很久以前播出的旧集不再补下
             if air_date and str(air_date) < expire_date:
+                continue
+            # 还没播出的集先不下载（否则会一直去搜不存在的集，界面缺失集数也会把未播集算进去）
+            if air_date and str(air_date) > datetime.date.today().strftime("%Y-%m-%d"):
                 continue
             download_episodes.append(episode)
         # 单轮下载数量保护：未显式设置开始集数时只取最新的若干集，
