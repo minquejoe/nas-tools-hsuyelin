@@ -1039,9 +1039,14 @@ class Subscribe:
                         self.update_subscribe_over_edition(rtype=media_info.type,
                                                            rssid=rssid,
                                                            media=search_result)
-                    else:
-                        # 完成订阅
+                    elif not getattr(self, "_lack_episodes", None):
+                        # 所有集都已处理完（含已播出），才能完成订阅
                         self.finish_rss_subscribe(rssid=rssid, media=media_info)
+                    else:
+                        # 连载中：只下载了其中几集，保持"正在订阅"并刷新缺失集数
+                        self.update_subscribe_tv_lack(rssid=rssid,
+                                                      media_info=media_info,
+                                                      seasoninfo=[{"season": media_info.get_season_seq()}])
                 elif no_exists and no_exists.get(media_info.tmdb_id):
                     # 更新状态
                     self.update_subscribe_tv_lack(rssid=rssid,
