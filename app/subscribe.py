@@ -1056,6 +1056,12 @@ class Subscribe:
                     # 未搜索到资源或缺失信息为空，订阅保持R状态继续等待，不做完成处理
                     log.info("【Subscribe】电视剧 %s 未搜索到资源，保持订阅状态" % media_info.get_title_string())
                     self.dbhelper.update_rss_tv_state(rssid=rssid, state='R')
+                    # 不管本轮有没有搜到资源，都按"尚未处理到的集"刷新缺失集数，
+                    # 否则界面的"已下载 x/总集数"会一直停留在旧值
+                    if getattr(self, "_lack_episodes", None):
+                        self.update_subscribe_tv_lack(rssid=rssid,
+                                                      media_info=media_info,
+                                                      seasoninfo=[{"season": media_info.get_season_seq()}])
             except Exception as err:
                 log.error(f"【Subscribe】电视剧 {name} 订阅搜索失败：{str(err)}")
                 self.dbhelper.update_rss_tv_state(rssid=rssid, state='R')
