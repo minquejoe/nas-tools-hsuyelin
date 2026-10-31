@@ -586,6 +586,7 @@ class Subscribe:
                 "download_setting": download_setting,
                 "total": rss_tv.TOTAL,
                 "lack": rss_tv.LACK,
+                "downloaded": getattr(rss_tv, "DOWNLOADED", None) or 0,
                 "total_ep": total_ep,
                 "current_ep": current_ep,
                 "fuzzy_match": fuzzy_match,
