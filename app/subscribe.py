@@ -1126,6 +1126,7 @@ class Subscribe:
         if not seasoninfo:
             return
         self.dbhelper.update_rss_tv_state(rssid=rssid, state='R')
+        self.dbhelper.update_rss_tv_downloaded(rssid=rssid, count=getattr(self, "_downloaded_count", None))
         lack_episodes = getattr(self, "_lack_episodes", None)
         if lack_episodes:
             log.info("【Subscribe】更新电视剧 %s %s 缺失集数为 %s" % (
@@ -1234,6 +1235,7 @@ class Subscribe:
         progress = max(known) if known else 0
         # 订阅界面显示"已下载 x/总集数"用的是 总集数-缺失集数，
         # 因此缺失集数应记录"尚未处理到的集"（含未播出的），而不是本轮要下载的集
+        self._downloaded_count = progress
         try:
             self._lack_episodes = list(range(progress + 1, int(total_ep or season_total or max(missing)) + 1))
         except (TypeError, ValueError):

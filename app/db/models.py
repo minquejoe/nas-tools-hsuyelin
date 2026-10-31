@@ -216,6 +216,8 @@ class RSSHISTORY(Base):
     IMAGE = Column(Text)
     DESC = Column(Text)
     TOTAL = Column(Integer)
+    # 已处理集数（含看后删除的集），界面展示用，与总集数独立
+    DOWNLOADED = Column(Integer, default=0)
     START = Column(Integer)
     FINISH_TIME = Column(Text)
     NOTE = Column(Text)

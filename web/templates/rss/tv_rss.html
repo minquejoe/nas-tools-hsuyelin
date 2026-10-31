@@ -52,9 +52,9 @@
             </div>
             <div class="card-progress" style="overflow: hidden">
               <div class="progress-bar bg-green"
-                   style="width:{% if (Attr.total or -1) > 0 %}{{ ((Attr.total or -1)-(Attr.lack or -1))*100/(Attr.total or -1) }}{% endif %}%"
+                   style="width:{% if (Attr.total or -1) > 0 %}{{ (Attr.downloaded or 0)*100/(Attr.total or -1) }}{% endif %}%"
                    role="progressbar"
-                   aria-valuenow="{% if (Attr.total or -1) > 0 %}{{ ((Attr.total or -1)-(Attr.lack or -1))*100/(Attr.total or -1) }}{% endif %}"
+                   aria-valuenow="{% if (Attr.total or -1) > 0 %}{{ (Attr.downloaded or 0)*100/(Attr.total or -1) }}{% endif %}"
                    aria-valuemin="0" aria-valuemax="100">
               </div>
             </div>
@@ -74,7 +74,7 @@
                 {% elif Attr.state == 'R' %}
                   <span class="badge bg-green"></span>  正在订阅
                   {% if (Attr.total or -1) > 0 %}
-                    ({{ (Attr.total or -1) - (Attr.lack or -1) }}/{{ (Attr.total or -1) }})
+                    (已下载 {{ Attr.downloaded or 0 }}/{{ Attr.total }})
                   {% endif %}
                 {% else %}
                   <span class="badge bg-blue"></span>  完成

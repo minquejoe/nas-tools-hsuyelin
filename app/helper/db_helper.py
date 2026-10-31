@@ -1072,6 +1072,15 @@ class DbHelper:
         return 0
 
     @DbPersist(_db)
+    @DbPersist(_db)
+    def update_rss_tv_downloaded(self, rssid, count):
+        if not rssid:
+            return
+        try:
+            self._db.query(RSSTVS).filter(RSSTVS.ID == int(rssid)).update({RSSTVS.DOWNLOADED: int(count or 0)})
+        except Exception as err:
+            ExceptionUtils.exception_traceback(err)
+
     def update_rss_tv_lack(self, title=None, year=None, season=None, rssid=None, lack_episodes: list = None):
         """
         更新电视剧缺失的集数
