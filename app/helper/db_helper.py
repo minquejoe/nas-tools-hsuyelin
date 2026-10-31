@@ -1073,6 +1073,19 @@ class DbHelper:
 
     @DbPersist(_db)
     @DbPersist(_db)
+    def get_rss_tv_downloaded(self, rssid):
+        """
+        查询订阅已处理集数（单独查询，避免部分字段查询时取不到）
+        """
+        if not rssid:
+            return 0
+        try:
+            row = self._db.query(RSSTVS.DOWNLOADED).filter(RSSTVS.ID == int(rssid)).first()
+            return int(row[0] or 0) if row else 0
+        except Exception as err:
+            ExceptionUtils.exception_traceback(err)
+            return 0
+
     def update_rss_tv_downloaded(self, rssid, count):
         if not rssid:
             return
