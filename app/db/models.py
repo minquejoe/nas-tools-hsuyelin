@@ -298,6 +298,8 @@ class RSSTVS(Base):
     TOTAL_EP = Column(Integer)
     CURRENT_EP = Column(Integer)
     TOTAL = Column(Integer)
+    # 已处理集数（含看后删除的集），与总集数独立统计
+    DOWNLOADED = Column(Integer, default=0)
     LACK = Column(Integer)
     STATE = Column(Text)
     DESC = Column(Text)
