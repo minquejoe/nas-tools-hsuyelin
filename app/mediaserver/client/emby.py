@@ -463,7 +463,8 @@ class Emby(_IMediaClient):
             if not isinstance(exists_episodes, list):
                 return None
             if exists_episodes:
-                log.info(f"【{self.client_name}】{meta_info.get_title_string()} 用名称「{title}」在媒体库匹配到 {len(exists_episodes)} 集")
+                title_text = meta_info.get_title_string() if hasattr(meta_info, "get_title_string") else title
+                log.info(f"【{self.client_name}】{title_text} 用名称「{title}」在媒体库匹配到 {len(exists_episodes)} 集")
                 break
         exists_episodes = [episode.get("episode_num") for episode in exists_episodes]
         total_episodes = [episode for episode in range(1, total_num + 1)]
