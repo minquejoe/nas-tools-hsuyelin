@@ -1043,6 +1043,14 @@ class Downloader:
                                                                                      episode_count)
                         # 没有配置Emby
                         if no_exists_episodes is None:
+                            # 配置了媒体服务器但查询失败（如Jellyfin升级后ApiKey失效/服务不可用），
+                            # 不能回退成"整季缺失"，否则会把已经看过的集全部重新下载
+                            if self.mediaserver.server:
+                                log.error("【Downloader】媒体服务器查询失败（请检查服务地址和ApiKey），"
+                                          "本轮跳过 %s 第%s季 的缺失检查，避免重复下载" % (
+                                              meta_info.get_title_string(), season_number))
+                                return_flag = None
+                                break
                             no_exists_episodes = self.filetransfer.get_no_exists_medias(meta_info,
                                                                                         season_number,
                                                                                         episode_count)
