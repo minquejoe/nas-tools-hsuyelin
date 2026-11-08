@@ -401,12 +401,24 @@ class Jellyfin(_IMediaClient):
         # 没有季默认为和1季
         if not season:
             season = 1
-        exists_episodes = self.get_tv_episodes(title=meta_info.title,
-                                               year=meta_info.year,
-                                               tmdb_id=meta_info.tmdb_id,
-                                               season=season)
-        if not isinstance(exists_episodes, list):
-            return None
+        # 媒体库里的剧集目录名可能是中文名、英文名或原名，逐个尝试，
+        # 避免因为名称不一致（如TMDB返回英文名而库中用中文名）误判为整季缺失
+        titles = []
+        for title in (getattr(meta_info, "cn_name", None), meta_info.title, getattr(meta_info, "en_name", None)):
+            title = str(title or "").strip()
+            if title and title not in titles:
+                titles.append(title)
+        exists_episodes = []
+        for title in titles:
+            exists_episodes = self.get_tv_episodes(title=title,
+                                                   year=meta_info.year,
+                                                   tmdb_id=meta_info.tmdb_id,
+                                                   season=season)
+            if not isinstance(exists_episodes, list):
+                return None
+            if exists_episodes:
+                log.info(f"【{self.client_name}】{meta_info.get_title_string()} 用名称「{title}」在媒体库匹配到 {len(exists_episodes)} 集")
+                break
         exists_episodes = [episode.get("episode_num") for episode in exists_episodes]
         total_episodes = [episode for episode in range(1, total_num + 1)]
         return list(set(total_episodes).difference(set(exists_episodes)))
