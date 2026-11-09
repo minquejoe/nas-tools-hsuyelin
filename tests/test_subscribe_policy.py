@@ -40,15 +40,19 @@ def _raw_class(factory):
 
 
 class _FakeDbHelper:
-    def __init__(self, history=None, alias_history=None):
+    def __init__(self, history=None, alias_history=None, download_history=None):
         self._history = history or []
         self._alias_history = alias_history or []
+        self._download_history = download_history or []
 
     def get_transfer_history_episodes(self, tmdbid=None, title=None, season=None, extra_titles=None):
         # 传了别名（说明TMDB存在重复条目）时返回记在另一个名称下的历史
         if extra_titles and self._alias_history:
             return list(self._alias_history)
         return list(self._history)
+
+    def get_download_history_episodes(self, tmdbid=None, title=None, season=None, days=7):
+        return list(self._download_history)
 
 
 class _FakeMedia:

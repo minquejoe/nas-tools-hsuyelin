@@ -1228,6 +1228,8 @@ class Subscribe:
             ExceptionUtils.exception_traceback(err)
         known |= set(self.dbhelper.get_transfer_history_episodes(tmdbid=tmdbid, season=season, title=title,
                                                                  extra_titles=extra_titles))
+        # 已经加入下载器但还没转存的集也算已处理，避免同一集在转存前被重复添加下载
+        known |= set(self.dbhelper.get_download_history_episodes(tmdbid=tmdbid, season=season, title=title))
         if current_ep:
             try:
                 known.add(int(current_ep) - 1)

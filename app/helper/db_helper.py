@@ -1184,6 +1184,40 @@ class DbHelper:
         else:
             return None
 
+    def get_download_history_episodes(self, tmdbid=None, title=None, season=None, days=7):
+        """
+        查询下载历史中出现过的集号：已经加入下载器、可能还没完成转存的集，
+        不应被当成"缺失"而重复添加下载（只统计最近days天，太久的失败任务仍允许重试）
+        """
+        if not tmdbid and not title:
+            return []
+        since = (datetime.datetime.now() - datetime.timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+        try:
+            if tmdbid:
+                rows = self._db.query(DOWNLOADHISTORY.SE).filter(
+                    DOWNLOADHISTORY.TMDBID == str(tmdbid),
+                    DOWNLOADHISTORY.DATE >= since).all()
+            else:
+                rows = self._db.query(DOWNLOADHISTORY.SE).filter(
+                    DOWNLOADHISTORY.TITLE == title,
+                    DOWNLOADHISTORY.DATE >= since).all()
+        except Exception as err:
+            ExceptionUtils.exception_traceback(err)
+            return []
+        season_flag = "S%s" % str(int(season)).zfill(2) if season else None
+        episodes = set()
+        for row in rows:
+            try:
+                se = row[-1]
+            except (TypeError, IndexError, KeyError):
+                se = row
+            se = str(se or "").replace(" ", "").upper()
+            if season_flag and not se.startswith(season_flag):
+                continue
+            for match in re.finditer(r"E(\d{1,4})", se):
+                episodes.add(int(match.group(1)))
+        return sorted(episodes)
+
     def get_transfer_history_episodes(self, tmdbid=None, title=None, season=None, extra_titles=None):
         """
         查询转移历史中出现过的集号（含用户看后已删除的集），用于判断订阅已经下载到第几集
